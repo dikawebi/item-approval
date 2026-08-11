@@ -1,0 +1,47 @@
+<?php
+
+namespace App\Filament\Resources\ItemCreationRequests\Pages;
+
+use App\Filament\Resources\ItemCreationRequests\ItemCreationRequestResource;
+use Filament\Resources\Pages\EditRecord;
+
+class EditItemCreationRequest extends EditRecord
+{
+    protected static string $resource = ItemCreationRequestResource::class;
+
+    /**
+     * These mirror the row actions defined in ItemCreationRequestResource::table().
+     * Notification/email links point to this edit page, so the actual workflow
+     * buttons need to live here too — otherwise a user following the email link
+     * lands on a page with nothing to click.
+     */
+    protected function getHeaderActions(): array
+    {
+        return [
+            ItemCreationRequestResource::getClassifyAction(),
+            ItemCreationRequestResource::getNeedsInfoAction(),
+            ItemCreationRequestResource::getRejectAction(),
+            ItemCreationRequestResource::getCreateInD365Action(),
+            ItemCreationRequestResource::getReviseAction(),
+            ItemCreationRequestResource::getViewErrorAction(),
+        ];
+    }
+
+    /**
+     * If request was rejected or needs info, saving the revised form should
+     * resubmit it back to Accounting queue.
+     */
+    protected function mutateFormDataBeforeSave(array $data): array
+    {
+        if (in_array($this->record->status, ['rejected', 'needs_info'], true)) {
+            $data['status'] = 'pending';
+
+            // Clear accounting notes so request starts fresh after revision.
+            $data['info_request_note'] = null;
+            $data['rejection_reason'] = null;
+        }
+
+        return $data;
+    }
+}
+
