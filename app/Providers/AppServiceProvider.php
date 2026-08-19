@@ -3,6 +3,7 @@
 namespace App\Providers;
 
 use Illuminate\Support\ServiceProvider;
+use Illuminate\Support\Facades\URL;
 use App\Models\ItemCreationRequest;
 use App\Observers\ItemCreationRequestObserver;
 
@@ -21,7 +22,13 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
-        //
-         ItemCreationRequest::observe(ItemCreationRequestObserver::class);
+        if (config('app.url')) {
+            URL::forceRootUrl(config('app.url'));
+            if (str_starts_with(config('app.url'), 'https://')) {
+                URL::forceScheme('https');
+            }
+        }
+
+        ItemCreationRequest::observe(ItemCreationRequestObserver::class);
     }
 }
