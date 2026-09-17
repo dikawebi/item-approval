@@ -3,6 +3,7 @@
 namespace App\Filament\Resources\Users;
 
 use App\Filament\Resources\Users\Pages;
+use App\Filament\Concerns\StaffOnlyAccess;
 use App\Models\User;
 use BackedEnum;
 use UnitEnum;
@@ -17,6 +18,8 @@ use Illuminate\Support\Facades\Hash;
 
 class UserResource extends Resource
 {
+    use StaffOnlyAccess;
+
     protected static ?string $model = User::class;
 
     protected static string|BackedEnum|null $navigationIcon = 'heroicon-o-users';

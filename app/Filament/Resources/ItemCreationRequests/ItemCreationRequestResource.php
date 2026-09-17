@@ -9,6 +9,7 @@ use App\Models\D365ItemGroup;
 use App\Models\D365ItemModelGroup;
 use App\Models\ItemCreationRequest;
 use App\Models\User;
+use App\Support\Roles;
 use BackedEnum;
 use Filament\Actions\Action;
 use Filament\Actions\ViewAction;
@@ -19,7 +20,10 @@ use Filament\Schemas\Schema;
 use Filament\Tables;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\HtmlString;
 class ItemCreationRequestResource extends Resource
 {
     protected static ?string $model = ItemCreationRequest::class;
@@ -44,7 +48,9 @@ class ItemCreationRequestResource extends Resource
             return (string) static::getModel()::whereIn('status', ['classified', 'create_failed'])->count();
         }
 
-        return (string) static::getModel()::whereIn('status', ['pending', 'needs_info'])->count();
+        $query = static::getModel()::forAudience($user)->whereIn('status', ['pending', 'needs_info']);
+
+        return (string) $query->count();
     }
 
     public static function form(Schema $schema): Schema
@@ -76,8 +82,23 @@ class ItemCreationRequestResource extends Resource
 
             Forms\Components\TextInput::make('item_name')
                 ->required()
+                ->live(onBlur: true)
                 ->disabled(fn (?ItemCreationRequest $record) => $record && !$record->fieldsAreEditable())
                 ->maxLength(255),
+
+            Forms\Components\Placeholder::make('duplicate_warning')
+                ->label('Kemungkinan duplikat')
+                ->content(fn ($get, $record) => static::duplicateWarningContent(
+                    (string) $get('item_name'),
+                    static::currentUser(),
+                    $record?->id,
+                ))
+                ->visible(fn ($get, $record) => static::findSimilarNames(
+                    (string) $get('item_name'),
+                    static::currentUser(),
+                    $record?->id,
+                )->isNotEmpty())
+                ->columnSpanFull(),
 
             Forms\Components\Textarea::make('description')
                 ->disabled(fn (?ItemCreationRequest $record) => $record && !$record->fieldsAreEditable()),
@@ -177,7 +198,9 @@ class ItemCreationRequestResource extends Resource
                 static::getReviseAction(),
                 ViewAction::make(),
                 static::getViewErrorAction(),
-                DeleteAction::make(),
+                DeleteAction::make()
+                    ->visible(fn (?ItemCreationRequest $record) => static::canBeDeletedBy($record, static::currentUser()))
+                    ->requiresConfirmation(),
             ])
             ->bulkActions([
                 static::getBulkCreateInD365Action(),
@@ -445,18 +468,105 @@ class ItemCreationRequestResource extends Resource
             RelationManagers\StatusLogsRelationManager::class,
         ];
     }
-
     // Plain requesters only see their own requests; Accounting and
     // Commercial need visibility across the whole queue to do their jobs.
     public static function getEloquentQuery(): Builder
     {
-        $query = parent::getEloquentQuery();
-        $user = static::currentUser();
+        $query = parent::getEloquentQuery()->with(['requestedBy']);
 
-        if ($user && ! $user->hasAnyRole(['accounting', 'commercial'])) {
-            $query->where('requested_by', $user->id);
+        return $query->forAudience(static::currentUser());
+    }
+
+    // Record-level access: owners see their own requests, staff see all.
+    // (The scoped query above already 404s other people's records for
+    // requesters; this makes view/edit pages explicitly deny instead.)
+    public static function canView(Model $record): bool
+    {
+        return static::canBeOpenedBy($record, static::currentUser());
+    }
+
+    public static function canEdit(Model $record): bool
+    {
+        return static::canBeOpenedBy($record, static::currentUser());
+    }
+
+    public static function canBeOpenedBy(?Model $record, ?User $user): bool
+    {
+        if (! $record instanceof ItemCreationRequest || ! $user) {
+            return false;
         }
 
-        return $query;
+        return $record->requested_by === $user->id || Roles::isStaff($user);
+    }
+
+    // Deletion is only allowed while a request is still a draft
+    // (pending / needs_info / rejected) — never once Accounting has
+    // classified it or it reached D365. Owners may delete their own
+    // drafts; staff may delete any draft for queue cleanup.
+    public static function canBeDeletedBy(?ItemCreationRequest $record, ?User $user): bool
+    {
+        if (! $record || ! $user) {
+            return false;
+        }
+
+        if (! in_array($record->status, ['pending', 'needs_info', 'rejected'], true)) {
+            return false;
+        }
+
+        return $record->requested_by === $user->id || Roles::isStaff($user);
+    }
+
+    /**
+     * Soft duplicate detection: find existing requests with a similar
+     * item name. Scoped to the viewer's audience (requesters only match
+     * against their own), excluding the record currently being edited.
+     * Deliberately advisory — same names can be legitimately different
+     * items, so this warns instead of blocking.
+     *
+     * @return Collection<int, ItemCreationRequest>
+     */
+    public static function findSimilarNames(string $name, ?User $user, ?int $ignoreId = null): Collection
+    {
+        $needle = mb_strtolower(trim($name));
+
+        if (mb_strlen($needle) < 4) {
+            return collect();
+        }
+
+        // Escape LIKE wildcards so the input is matched literally.
+        $needle = str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $needle);
+
+        $query = ItemCreationRequest::query()
+            ->forAudience($user)
+            ->with(['requestedBy'])
+            ->whereRaw('LOWER(item_name) LIKE ? ESCAPE ?', ["%{$needle}%", '\\'])
+            ->orderByDesc('created_at')
+            ->limit(5);
+
+        if ($ignoreId) {
+            $query->whereKeyNot($ignoreId);
+        }
+
+        return $query->get();
+    }
+
+    public static function duplicateWarningContent(string $name, ?User $user, ?int $ignoreId = null): HtmlString|string
+    {
+        $matches = static::findSimilarNames($name, $user, $ignoreId);
+
+        if ($matches->isEmpty()) {
+            return '';
+        }
+
+        $lines = $matches->map(fn (ItemCreationRequest $match) => sprintf(
+            '%s — %s (oleh %s)',
+            e($match->item_name),
+            e($match->status),
+            e($match->requestedBy?->name ?? '?'),
+        ))->implode('<br>');
+
+        return new HtmlString(
+            'Nama ini mirip dengan request yang sudah ada. Lanjutkan hanya jika memang item berbeda:<br>'.$lines
+        );
     }
 }

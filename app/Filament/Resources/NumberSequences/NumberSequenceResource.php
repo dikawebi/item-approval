@@ -3,6 +3,7 @@
 namespace App\Filament\Resources\NumberSequences;
 
 use App\Filament\Resources\NumberSequences\Pages;
+use App\Filament\Concerns\StaffOnlyAccess;
 use App\Models\D365ItemGroup;
 use App\Models\NumberSequence;
 use BackedEnum;
@@ -17,6 +18,8 @@ use UnitEnum;
 
 class NumberSequenceResource extends Resource
 {
+    use StaffOnlyAccess;
+
     protected static ?string $model = NumberSequence::class;
 
     protected static string|BackedEnum|null $navigationIcon = 'heroicon-o-hashtag';

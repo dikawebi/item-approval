@@ -3,6 +3,7 @@
 namespace App\Filament\Resources\D365ItemGroups;
 
 use App\Filament\Resources\D365ItemGroups\Pages;
+use App\Filament\Concerns\StaffOnlyAccess;
 use App\Models\D365ItemGroup;
 use App\Models\NumberSequence;
 use BackedEnum;
@@ -17,6 +18,8 @@ use UnitEnum;
 
 class D365ItemGroupResource extends Resource
 {
+    use StaffOnlyAccess;
+
     protected static ?string $model = D365ItemGroup::class;
 
     protected static string|BackedEnum|null $navigationIcon = 'heroicon-o-tag';

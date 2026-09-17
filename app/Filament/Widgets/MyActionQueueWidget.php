@@ -45,12 +45,13 @@ class MyActionQueueWidget extends BaseWidget
         $user = $this->currentUser();
 
         if ($user?->hasRole('commercial')) {
-            $query = ItemCreationRequest::query()->whereIn('status', ['classified', 'create_failed']);
+            $query = ItemCreationRequest::query()->with(['requestedBy'])->whereIn('status', ['classified', 'create_failed']);
         } elseif ($user?->hasRole('accounting')) {
-            $query = ItemCreationRequest::query()->whereIn('status', ['pending', 'needs_info']);
+            $query = ItemCreationRequest::query()->with(['requestedBy'])->whereIn('status', ['pending', 'needs_info']);
         } else {
             // Plain requester: only their own requests, not the whole org's queue.
             $query = ItemCreationRequest::query()
+                ->with(['requestedBy'])
                 ->where('requested_by', $user?->id)
                 ->whereIn('status', ['needs_info', 'rejected']);
         }

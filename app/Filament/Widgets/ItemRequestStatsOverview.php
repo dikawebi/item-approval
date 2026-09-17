@@ -20,16 +20,23 @@ class ItemRequestStatsOverview extends BaseWidget
         return $user;
     }
 
+    /**
+     * Base query for all stats. Requesters see only their own numbers;
+     * staff see org-wide figures.
+     */
+    protected function scopedQuery(): \Illuminate\Database\Eloquent\Builder
+    {
+        return ItemCreationRequest::forAudience($this->currentUser());
+    }
+
     protected function getStats(): array
     {
-        $user = $this->currentUser();
-
-        $pending = ItemCreationRequest::whereIn('status', ['pending', 'needs_info'])->count();
-        $classified = ItemCreationRequest::where('status', 'classified')->count();
-        $created = ItemCreationRequest::where('status', 'created')->count();
-        $rejected = ItemCreationRequest::where('status', 'rejected')->count();
-        $createFailed = ItemCreationRequest::where('status', 'create_failed')->count();
-        $aging = ItemCreationRequest::whereIn('status', ['pending', 'needs_info', 'classified'])
+        $pending = $this->scopedQuery()->whereIn('status', ['pending', 'needs_info'])->count();
+        $classified = $this->scopedQuery()->where('status', 'classified')->count();
+        $created = $this->scopedQuery()->where('status', 'created')->count();
+        $rejected = $this->scopedQuery()->where('status', 'rejected')->count();
+        $createFailed = $this->scopedQuery()->where('status', 'create_failed')->count();
+        $aging = $this->scopedQuery()->whereIn('status', ['pending', 'needs_info', 'classified'])
             ->where('updated_at', '<=', now()->subHours(48))
             ->count();
 

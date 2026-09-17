@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Models\User;
+use App\Support\Roles;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -116,5 +117,17 @@ class ItemCreationRequest extends Model
     {
         return $query->whereIn('status', ['pending', 'needs_info', 'classified'])
             ->where('updated_at', '<=', now()->subHours(48));
+    }
+
+    // Audience scoping shared by the resource table, nav badge, dashboard
+    // stats and duplicate search: staff see everything, plain requesters
+    // only their own requests.
+    public function scopeForAudience(Builder $query, ?User $user): Builder
+    {
+        if ($user && ! Roles::isStaff($user)) {
+            $query->where('requested_by', $user->id);
+        }
+
+        return $query;
     }
 }

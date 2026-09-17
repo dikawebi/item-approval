@@ -21,10 +21,10 @@ class ItemCreationRequestObserver
             'note' => 'Request submitted.',
         ]);
 
-        $accountingUsers = $this->usersWithRole('accounting');
-        $commercialUsers = $this->usersWithRole('commercial');
-
-        $recipients = $accountingUsers->merge($commercialUsers);
+        // Only Accounting is pinged here — Commercial has nothing to do
+        // until the request is classified (they get their own 'classified'
+        // notification then), so including them just doubles the noise.
+        $recipients = $this->usersWithRole('accounting');
         $requesterName = optional($request->requestedBy)->name ?? 'Unknown';
 
         foreach ($recipients as $user) {

@@ -19,7 +19,7 @@ return new class extends Migration
         Schema::create('item_creation_request_status_logs', function (Blueprint $table) {
             $table->id();
             $table->foreignId('item_creation_request_id')
-                ->constrained()
+                ->constrained(indexName: 'icr_status_logs_request_fk')
                 ->cascadeOnDelete();
             $table->string('from_status')->nullable();
             $table->string('to_status');
@@ -27,7 +27,7 @@ return new class extends Migration
             $table->text('note')->nullable();
             $table->timestamps();
 
-            $table->index(['item_creation_request_id', 'created_at']);
+            $table->index(['item_creation_request_id', 'created_at'], 'icr_status_logs_request_created_idx');
         });
     }
 

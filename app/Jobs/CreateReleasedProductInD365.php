@@ -12,7 +12,9 @@ use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
+use Illuminate\Queue\Middleware\WithoutOverlapping;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Str;
 
 class CreateReleasedProductInD365 implements ShouldQueue
 {
@@ -27,8 +29,35 @@ class CreateReleasedProductInD365 implements ShouldQueue
         public ItemCreationRequest $request
     ) {}
 
+    /**
+     * Never let two jobs create the same request in D365 concurrently
+     * (double-click / bulk + single fired together). A duplicate dispatch
+     * is dropped outright; the status guard in handle() covers the rest.
+     */
+    public function middleware(): array
+    {
+        return [
+            (new WithoutOverlapping("d365-create-{$this->request->id}"))
+                ->dontRelease()
+                ->expireAfter(600),
+        ];
+    }
+
     public function handle(D365ODataClient $client): void
     {
+        $this->request->refresh();
+
+        // Idempotency: another job already finished this request.
+        if ($this->request->status === 'created') {
+            return;
+        }
+
+        // Only createable stages may proceed — e.g. a duplicate dispatch
+        // arriving after the request moved elsewhere does nothing.
+        if (! in_array($this->request->status, ['creating', 'classified', 'create_failed'], true)) {
+            return;
+        }
+
         if (! $this->request->isFullyClassified()) {
             $this->request->update([
                 'status' => 'create_failed',
@@ -101,8 +130,44 @@ class CreateReleasedProductInD365 implements ShouldQueue
         }
     }
 
-    protected function sendSuccessNotifications(): void
+    /**
+     * Last-resort backstop: without this, an unexpected error outside the
+     * in-handle bookkeeping (or exhausting all tries) leaves the request
+     * stuck in `creating` forever — invisible to every queue, since the
+     * commercial dashboard only watches `classified` / `create_failed`.
+     */
+    public function failed(\Throwable $exception): void
     {
+        $request = $this->request->fresh();
+
+        // Record deleted, or a concurrent job already finished it.
+        if (! $request || $request->status === 'created') {
+            return;
+        }
+
+        $request->update([
+            'status' => 'create_failed',
+            'sync_error' => Str::limit($exception->getMessage(), 2000),
+        ]);
+
+        if ($request->creation_triggered_by) {
+            $triggerUser = User::find($request->creation_triggered_by);
+
+            if ($triggerUser) {
+                ItemWorkflowNotifier::send(
+                    $triggerUser,
+                    "❌ D365 creation failed: {$request->item_name}",
+                    "Creation failed for \"{$request->item_name}\" after all retries. Error: ".Str::limit($exception->getMessage(), 200),
+                    route('filament.item-approval.resources.item-creation-requests.edit', $request),
+                    'View Request / Retry',
+                    'heroicon-o-exclamation-triangle',
+                    'danger'
+                );
+            }
+        }
+    }
+
+    protected function sendSuccessNotifications(): void    {
         $title = "✅ Item created in D365: {$this->request->item_name}";
         $body = "The item \"{$this->request->item_name}\" was successfully created with item number {$this->request->assigned_item_number}.";
         $url = route('filament.item-approval.resources.item-creation-requests.edit', $this->request);
